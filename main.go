@@ -112,13 +112,13 @@ func getCat() (*Cat, error) {
 	return &catArray[0], nil
 }
 
-func (cat *Cat) getCropedImage(request Request, channel chan string, errorChannel chan error) (image.Image, error) {
+func (cat *Cat) getCropedImage(request Request, c chan string, ec chan error) (image.Image, error) {
 	resp, err := http.Get(cat.URL)
 	if err != nil {
 		return nil, err
 	}
 
-	img, err := cropImage(resp.Body, request, channel, errorChannel)
+	img, err := cropImage(resp.Body, request, c, ec)
 	if err != nil {
 		return nil, err
 	}
@@ -126,10 +126,10 @@ func (cat *Cat) getCropedImage(request Request, channel chan string, errorChanne
 	return img, nil
 }
 
-func cropImage(resp io.ReadCloser, request Request, channel chan string, errorChannel chan error) (image.Image, error) {
+func cropImage(resp io.ReadCloser, request Request, c chan string, ec chan error) (image.Image, error) {
 	originalImage, err := jpeg.Decode(resp)
 	if err != nil {
-		downloadCatPhoto(request, channel, errorChannel)
+		downloadCatPhoto(request, c, ec)
 		return nil, err
 	}
 
