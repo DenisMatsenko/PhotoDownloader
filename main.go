@@ -3,27 +3,29 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/oliamb/cutter"
 	"image"
 	"image/jpeg"
-	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
+
+	"github.com/oliamb/cutter"
 )
 
 type Cat struct {
-	ID     string `json:"id"`
-	URL    string `json:"url"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
+	ID     string 		`json:"id"`
+	URL    string 		`json:"url"`
+	Width  int    		`json:"width"`
+	Height int    		`json:"height"`
+	Image  image.Image 	
 }
 
 type Request struct {
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	PhotosCount  int    `json:"photos_count"`
-	SaveToFolder string `json:"save_to_folder"`
+	Width        int    
+	Height       int    
+	PhotosCount  int    
+	SaveToFolder string 
 }
 
 func main() {
@@ -36,6 +38,8 @@ func main() {
 }
 
 func exec(request Request) {
+	os.Mkdir(request.SaveToFolder, 0777)
+
 	channel := make(chan string, request.PhotosCount*2)
 	errorChannel := make(chan error, request.PhotosCount*2)
 
@@ -43,7 +47,7 @@ func exec(request Request) {
 	for i := 0; i < request.PhotosCount; i++ {
 		wg.Add(1)
 		go func() {
-			downloadCatPhoto(request, channel, errorChannel)
+			processCatPhotoRequest(request, channel, errorChannel)
 			wg.Done()
 		}()
 	}
@@ -52,8 +56,13 @@ func exec(request Request) {
 	close(channel)
 	close(errorChannel)
 
+	isError := false
 	for err := range errorChannel {
+		isError = true
 		fmt.Println("Error: ", err)
+	}
+	if isError {
+		os.Exit(1)
 	}
 
 	for str := range channel {
@@ -61,20 +70,23 @@ func exec(request Request) {
 	}
 }
 
-func downloadCatPhoto(request Request, channel chan string, errorChannel chan error) {
-	cat, err := getCat()
+func processCatPhotoRequest(request Request, channel chan string, errorChannel chan error) {
+	cat, err := newCat()
+	if err != nil {
+		errorChannel <- err
+		return
+	}
+	if cat == nil {
+		channel <- "No cat photo found"
+		return
+	}
+
+	img, err := cropImage(cat.Image, request)
 	if err != nil {
 		errorChannel <- err
 		return
 	}
 
-	img, err := cat.getCropedImage(request, channel, errorChannel)
-	if err != nil {
-		errorChannel <- err
-		return
-	}
-
-	os.Mkdir(request.SaveToFolder, 0777)
 	var pathToSave string = fmt.Sprintf("%s/cat-%s.jpg", request.SaveToFolder, cat.ID)
 
 	imageFile, err := os.Create(pathToSave)
@@ -93,47 +105,59 @@ func downloadCatPhoto(request Request, channel chan string, errorChannel chan er
 	channel <- fmt.Sprintf("Cat photo saved to %s", pathToSave)
 }
 
-func getCat() (*Cat, error) {
+func newCat() (*Cat, error) {
 	var catArray []Cat
+	var cat *Cat
 
-	resp, err := http.Get("https://api.thecatapi.com/v1/images/search")
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get("https://api.thecatapi.com/v1/images/search")
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP status code: %d", resp.StatusCode)
+		}
+		defer resp.Body.Close()
+
+		err = json.NewDecoder(resp.Body).Decode(&catArray)
+		if err != nil {
+			return nil, err
+		}
+		if len(catArray) != 1 {
+			return nil, fmt.Errorf("expected 1 cat, got %d", len(catArray))
+		}
+
+		cat = &catArray[0]
+		imageType := strings.Split(cat.URL, ".")[3]
+
+		if imageType == "jpg" {
+			break
+		}
+
+		fmt.Println("Not a jpg image, trying again...")
+
+		if i == 4 {
+			fmt.Println("Failed to fetch cat photo")
+			return nil, nil
+		}
+	}
+	
+
+	catUrlResp, err := http.Get(cat.URL)
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP status code: %d", resp.StatusCode)
-	}
-	defer resp.Body.Close()
 
-	err = json.NewDecoder(resp.Body).Decode(&catArray)
+	cat.Image, err = jpeg.Decode(catUrlResp.Body)
 	if err != nil {
 		return nil, err
 	}
-	return &catArray[0], nil
+
+	return cat, nil
 }
 
-func (cat *Cat) getCropedImage(request Request, c chan string, ec chan error) (image.Image, error) {
-	resp, err := http.Get(cat.URL)
-	if err != nil {
-		return nil, err
-	}
-
-	img, err := cropImage(resp.Body, request, c, ec)
-	if err != nil {
-		return nil, err
-	}
-
-	return img, nil
-}
-
-func cropImage(resp io.ReadCloser, request Request, c chan string, ec chan error) (image.Image, error) {
-	originalImage, err := jpeg.Decode(resp)
-	if err != nil {
-		downloadCatPhoto(request, c, ec)
-		return nil, err
-	}
-
-	croppedImg, err := cutter.Crop(originalImage, cutter.Config{
+func cropImage(image image.Image, request Request) (image.Image, error) {
+	croppedImgage, err := cutter.Crop(image, cutter.Config{
 		Width:  request.Width,
 		Height: request.Height,
 		Mode:   cutter.Centered,
@@ -141,7 +165,7 @@ func cropImage(resp io.ReadCloser, request Request, c chan string, ec chan error
 	if err != nil {
 		return nil, err
 	}
-	return croppedImg, nil
+	return croppedImgage, nil
 }
 
 func photosFolderInput() string {
