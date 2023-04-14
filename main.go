@@ -14,18 +14,18 @@ import (
 )
 
 type Cat struct {
-	ID     string 		`json:"id"`
-	URL    string 		`json:"url"`
-	Width  int    		`json:"width"`
-	Height int    		`json:"height"`
-	Image  image.Image 	
+	ID     string `json:"id"`
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Image  image.Image
 }
 
 type Request struct {
-	Width        int    
-	Height       int    
-	PhotosCount  int    
-	SaveToFolder string 
+	Width        int
+	Height       int
+	PhotosCount  int
+	SaveToFolder string
 }
 
 func main() {
@@ -109,7 +109,8 @@ func newCat() (*Cat, error) {
 	var catArray []Cat
 	var cat *Cat
 
-	for i := 0; i < 5; i++ {
+	attempts := 5
+	for i := 0; i < attempts; i++ {
 		resp, err := http.Get("https://api.thecatapi.com/v1/images/search")
 		if err != nil {
 			return nil, err
@@ -128,20 +129,19 @@ func newCat() (*Cat, error) {
 		}
 
 		cat = &catArray[0]
-		imageType := strings.Split(cat.URL, ".")[3]
 
-		if imageType == "jpg" {
+		if strings.Contains(strings.ToLower(cat.URL), ".jpg") || 
+			strings.Contains(strings.ToLower(cat.URL), ".jpeg") {
 			break
 		}
 
 		fmt.Println("Not a jpg image, trying again...")
 
-		if i == 4 {
+		if i == attempts-1 {
 			fmt.Println("Failed to fetch cat photo")
 			return nil, nil
 		}
 	}
-	
 
 	catUrlResp, err := http.Get(cat.URL)
 	if err != nil {
